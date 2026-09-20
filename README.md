@@ -33,9 +33,12 @@ uv), gere a partir do lock em vez de manter os dois à mão:
 uv export --no-dev --format requirements-txt > requirements.txt
 ```
 
-Exit codes: `0` validado, `1` bloqueado por validação, `2` falha de extração.
-Isso importa quando o robô virar job agendado — o orquestrador precisa
-distinguir "dados ruins" de "API fora do ar".
+Exit codes: `0` validado, `1` bloqueado por validação, `2` falha de extração
+(erro definitivo — precisa correção), `3` falha transitória (Gemini
+sobrecarregado ou limite de taxa — tente de novo mais tarde). Essa distinção
+importa quando o robô virar job agendado ou processar PDFs em lote: um `3`
+deve reenfileirar o PDF; um `2` deve alertar alguém, não tentar de novo
+sozinho.
 
 ## Arquivos
 

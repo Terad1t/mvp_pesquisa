@@ -53,24 +53,42 @@ def soma_total(pesquisa: PesquisaExtraida) -> Decimal:
     return nominais + pesquisa.ns_nr + pesquisa.brancos_nulos
 
 
-def calcular_governador(pesquisa: PesquisaExtraida) -> PesquisaFinal:
+def calcular_governador(pesquisa: PesquisaExtraida, top_n: int = 3) -> PesquisaFinal:
     """Regra de cargo majoritário com um voto por eleitor.
 
-    outros_valido = 100 - soma das porcentagens válidas dos nominais
-    outros_total  = 100 - (soma dos percentuais nominais + NS/NR + brancos/nulos)
+    Mantém apenas os `top_n` candidatos mais votados (por porcentagem válida)
+    e agrega todo o resto em "Outros".
+
+    outros_valido = 100 - soma das porcentagens válidas dos top_n
+    outros_total  = 100 - (soma dos percentuais totais dos top_n + NS/NR + brancos/nulos)
+
+    Por que "100 menos os top_n" e não "soma literal dos candidatos que sobraram":
+    são equivalentes quando a extração pegou todo mundo (o caso comum), mas a
+    subtração é mais robusta. Se o Gemini não extrair um candidato minúsculo,
+    ou se o próprio PDF já trouxer uma linha agregada sem nomear ninguém, o
+    resultado de "Outros" continua correto — porque ele nunca depende de somar
+    os itens que sobraram, só de saber quem são os top_n. O cálculo só quebra
+    se o próprio top_n estiver errado, que é exatamente o que a validação
+    (checagem de coerência entre colunas) já protege.
     """
+    ordenados = sorted(pesquisa.candidatos, key=lambda c: c.porcentagem_valida, reverse=True)
+    principais = ordenados[:top_n]
+
+    soma_validos_principais = sum((c.porcentagem_valida for c in principais), Decimal(0))
+    soma_totais_principais = sum((c.porcentual for c in principais), Decimal(0))
+
     return PesquisaFinal(
         estado=pesquisa.estado,
         cargo=pesquisa.cargo,
-        candidatos=pesquisa.candidatos,
+        candidatos=principais,
         ns_nr=pesquisa.ns_nr,
         brancos_nulos=pesquisa.brancos_nulos,
-        outros_valido=arredondar(CEM - soma_validos(pesquisa)),
-        outros_total=arredondar(CEM - soma_total(pesquisa)),
+        outros_valido=arredondar(CEM - soma_validos_principais),
+        outros_total=arredondar(CEM - soma_totais_principais - pesquisa.ns_nr - pesquisa.brancos_nulos),
     )
 
 
-def calcular_senador(pesquisa: PesquisaExtraida) -> PesquisaFinal:
+def calcular_senador(pesquisa: PesquisaExtraida, top_n: int = 3) -> PesquisaFinal:
     """Ainda não implementado — e essa ausência é intencional.
 
     No Senado o eleitor vota em dois nomes, então a base não é 100 e sim ~200,
@@ -95,11 +113,11 @@ class CargoNaoSuportado(ValueError):
     pass
 
 
-def calcular(pesquisa: PesquisaExtraida) -> PesquisaFinal:
+def calcular(pesquisa: PesquisaExtraida, top_n: int = 3) -> PesquisaFinal:
     cargo = pesquisa.cargo.strip().upper()
     regra = REGRAS.get(cargo)
     if regra is None:
         raise CargoNaoSuportado(
             f"Sem regra de cálculo para o cargo {cargo!r}. Disponíveis: {sorted(REGRAS)}"
         )
-    return regra(pesquisa)
+    return regra(pesquisa, top_n=top_n)

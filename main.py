@@ -16,7 +16,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from calculator import CargoNaoSuportado, calcular
-from extractor import ErroDeExtracao, extrair, extrair_de_json
+from extractor import ErroDeExtracao, ErroTransitorio, extrair, extrair_de_json
 from schemas import PesquisaExtraida, PesquisaFinal
 from validator import Nivel, Ocorrencia, tem_erro, validar_extracao, validar_resultado
 
@@ -59,7 +59,7 @@ def renderizar(p: PesquisaFinal) -> str:
     return "\n".join(linhas)
 
 
-def processar(pesquisa: PesquisaExtraida) -> int:
+def processar(pesquisa: PesquisaExtraida, top_n: int = 3) -> int:
     """Fases 2 a 4. Devolve o exit code."""
     ocorrencias = validar_extracao(pesquisa)
     _mostrar_ocorrencias(ocorrencias, "Validação da extração")
@@ -70,7 +70,7 @@ def processar(pesquisa: PesquisaExtraida) -> int:
         return 1
 
     try:
-        final = calcular(pesquisa)
+        final = calcular(pesquisa, top_n=top_n)
     except (CargoNaoSuportado, NotImplementedError) as erro:
         print(f"\n⚠ {erro}")
         return 1
@@ -96,6 +96,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="MVP de extração de pesquisas Veritá")
     parser.add_argument("pdf", nargs="?", type=Path, help="caminho do PDF")
     parser.add_argument("--cargo", default="GOVERNADOR", help="cargo a extrair")
+    parser.add_argument(
+        "--top-n",
+        type=int,
+        default=3,
+        help="quantos candidatos mais votados exibir individualmente; o resto vira 'Outros' (padrão: 3)",
+    )
     parser.add_argument("--json", type=Path, help="usa um JSON já extraído, sem chamar a API")
     args = parser.parse_args()
 
@@ -104,11 +110,14 @@ def main() -> int:
 
     try:
         pesquisa = extrair_de_json(args.json) if args.json else extrair(args.pdf, cargo=args.cargo)
+    except ErroTransitorio as erro:
+        print(f"⏳ {erro}", file=sys.stderr)
+        return 3
     except ErroDeExtracao as erro:
         print(f"⚠ Falha na extração: {erro}", file=sys.stderr)
         return 2
 
-    return processar(pesquisa)
+    return processar(pesquisa, top_n=args.top_n)
 
 
 if __name__ == "__main__":
