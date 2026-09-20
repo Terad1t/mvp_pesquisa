@@ -1,0 +1,22 @@
+[project]
+name = "mvp-pesquisa"
+version = "0.1.0"
+description = "MVP de extração de pesquisas eleitorais Veritá via Gemini"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "google-genai>=1.0.0",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+# Sem [build-system]: este projeto é uma aplicação que se roda, não um pacote
+# que se instala. Com isso o uv trata a raiz em modo virtual e não tenta
+# construir um wheel do próprio projeto a cada sync.
+[tool.uv]
+package = false
