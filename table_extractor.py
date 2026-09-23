@@ -91,6 +91,14 @@ def _localizar_pagina_cargo(doc: Any, cargo: str) -> int:
     )
 
 
+def _localizar_consolidacao_senado(doc: Any) -> int:
+    for indice, page in enumerate(doc):
+        texto = page.get_text("text").upper()
+        if "CONSOLIDAÇÃO" in texto and "PERGUNTAS" in texto and "PORCENTAGEM DE CASOS" in texto:
+            return indice
+    raise TabelaNaoEncontrada("Nenhuma tabela de consolidação do Senado foi encontrada.")
+
+
 def extrair_cargo(
     caminho_pdf: Path, cargo: str, pagina: int | None = None
 ) -> list[dict[str, object]]:
@@ -181,12 +189,19 @@ def extrair_tabela(caminho_pdf: Path, cargo: str, pagina: int | None = None) -> 
 
     with pymupdf.open(caminho_pdf) as doc:
         if pagina is None:
-            indice_pagina = _localizar_pagina_cargo(doc, cargo)
+            indice_pagina = (
+                _localizar_consolidacao_senado(doc)
+                if cargo.strip().upper() == "SENADOR"
+                else _localizar_pagina_cargo(doc, cargo)
+            )
         else:
             if pagina < 1 or pagina > doc.page_count:
                 raise TabelaNaoEncontrada(f"Página fora do PDF: {pagina}")
             indice_pagina = pagina - 1
         page = doc[indice_pagina]
+        if cargo.strip().upper() == "SENADOR":
+            return _extrair_tabela_senado(page, doc)
+
         linhas = page.get_text("text").splitlines()
         pergunta = _normalizar_texto(" ".join(linhas[:3]))
         candidatos = extrair_cargo(caminho_pdf, cargo, pagina=indice_pagina + 1)
@@ -201,6 +216,64 @@ def extrair_tabela(caminho_pdf: Path, cargo: str, pagina: int | None = None) -> 
         ns_nr=ns_nr,
         brancos_nulos=brancos_nulos,
         estado=estado,
+    )
+
+
+def _extrair_tabela_senado(page: Any, doc: Any) -> TabelaExtraida:
+    words = page.get_text("words")
+    pergunta = _normalizar_texto(" ".join(page.get_text("text").splitlines()[:4]))
+    linhas: dict[float, list[tuple[float, str]]] = {}
+    for word in words:
+        x, y, texto = word[0], round(word[1], 1), word[4].strip()
+        if 150 < y < 405 and x >= 40:
+            linhas.setdefault(y, []).append((x, texto))
+
+    candidatos: list[dict[str, object]] = []
+    ns_nr: Decimal | None = None
+    brancos_nulos: Decimal | None = None
+    for y, itens in sorted(linhas.items()):
+        itens.sort()
+        numeros = [
+            (x, texto.rstrip("%"))
+            for x, texto in itens
+            if _INTEIRO.fullmatch(texto.rstrip("%"))
+            or _PERCENTUAL.fullmatch(texto.rstrip("%"))
+        ]
+        if len(numeros) != 3:
+            continue
+        frequencia, _, casos = (texto for _, texto in numeros)
+        nome_partido = " ".join(texto for x, texto in itens if 40 <= x < 300)
+        nome_upper = nome_partido.upper()
+        if nome_upper == "NS/NR":
+            ns_nr = _decimal(casos)
+            continue
+        if nome_upper == "BRANCO/NULO":
+            brancos_nulos = _decimal(casos)
+            continue
+        if nome_upper == "TOTAL" or " - " not in nome_partido:
+            continue
+        nome, partido = nome_partido.rsplit(" - ", 1)
+        candidatos.append(
+            {
+                "posicao": len(candidatos) + 1,
+                "nome": nome.upper(),
+                "partido": partido.upper(),
+                "votos": int(frequencia),
+                "porcentual": _decimal(casos),
+                "porcentagem_valida": _decimal(casos),
+                "porcentagem_acumulada": _decimal(casos),
+            }
+        )
+
+    if not candidatos or ns_nr is None or brancos_nulos is None:
+        raise TabelaNaoEncontrada("Consolidação do Senado incompleta.")
+    return TabelaExtraida(
+        cargo="SENADOR",
+        pergunta=pergunta,
+        candidatos=candidatos,
+        ns_nr=ns_nr,
+        brancos_nulos=brancos_nulos,
+        estado=_estado_da_pagina(doc),
     )
 
 

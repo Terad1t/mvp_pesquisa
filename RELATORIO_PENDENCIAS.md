@@ -34,16 +34,17 @@ e identificacao da pergunta/cenario. O objetivo nao e resumir o texto do PDF.
 No PDF real atualmente usado, o parser funciona para:
 
 - Governador: pagina 7;
-- Presidente: pagina 14.
+- Presidente: pagina 14;
+- Senado, usando a consolidacao das perguntas 05 e 06: pagina 13.
 
 ### Pipeline hibrido
 
 `main.py` ja tenta o parser antes do Gemini:
 
-- com `--cargo GOVERNADOR` ou `--cargo PRESIDENTE`, uma extracao valida pode
+- com `--cargo GOVERNADOR`, `--cargo PRESIDENTE` ou `--cargo SENADOR`, uma extracao valida pode
   ser feita sem chamada a API;
-- sem filtro de cargo, Governador e Presidente sao extraidos pelo parser;
-- o Gemini continua sendo chamado para completar o Senado;
+- sem filtro de cargo, o parser tenta os tres cargos;
+- o Gemini so e chamado para cargos cuja tabela nao puder ser reconstruida;
 - se o parser falhar, o Gemini e usado como fallback;
 - os dados deterministas substituem os blocos equivalentes retornados pelo
   Gemini.
@@ -79,7 +80,7 @@ e movido para `analisados`, `bloqueados` ou `falhos` conforme o resultado.
 
 ### Testes
 
-Existem 15 testes automatizados cobrindo:
+Existem 22 testes automatizados cobrindo:
 
 - tabelas reais de Governador e Presidente;
 - nomes quebrados;
@@ -87,7 +88,10 @@ Existem 15 testes automatizados cobrindo:
 - contrato parser -> schema;
 - fallback para Gemini;
 - posicoes duplicadas e faltantes;
-- descoberta de PDFs e nomes de saida do lote.
+- descoberta de PDFs e nomes de saida do lote;
+- posicoes parcialmente ausentes;
+- validacao da base de 200% do Senado;
+- recalculo de percentuais validos e `Outros` para o Senado.
 
 Comando:
 
@@ -99,17 +103,19 @@ uv run pytest -q
 
 ### 1. Senado
 
-As tabelas do Senado aparecem em duas perguntas no PDF real. Ainda falta:
+As tabelas do Senado aparecem em duas perguntas e uma consolidacao no PDF real.
+A consolidacao ja e extraida deterministicamente e a regra de base 200% ja foi
+implementada. Ainda falta validar esse comportamento em mais institutos e
+layouts. Permanecem como pontos de atencao:
 
 - extrair deterministicamente as duas tabelas;
 - identificar candidatos, posicoes e percentuais de cada pergunta;
 - entender a tabela de consolidacao;
 - definir se a saida usa a primeira pergunta, a segunda ou a consolidacao;
 - validar a soma correta para dois votos por eleitor;
-- implementar o calculo de `Outros` do Senado.
+- ampliar os testes com outros formatos de consolidacao;
 
-Enquanto isso, Senado pode vir do Gemini, mas fica sem calculo final porque a
-regra matematica ainda levanta `NotImplementedError`.
+Se a consolidacao nao puder ser reconstruida, o Gemini continua sendo fallback.
 
 ### 2. Robustez para outros layouts
 
@@ -171,7 +177,6 @@ Ainda nao foram implementados:
 
 ## Estado atual resumido
 
-O pipeline principal ja e hibrido e o processamento em lote ja existe. O
-principal bloqueio funcional para cobrir todos os cargos e o Senado: sua tabela
-usa dois votos por eleitor e ainda nao possui parser consolidado nem regra de
-calculo definida.
+O pipeline principal ja e hibrido, cobre os tres cargos do PDF real e o
+processamento em lote ja existe. Os principais riscos restantes sao variacoes
+de layout, validacao em mais PDFs e a integracao futura com a geracao das artes.

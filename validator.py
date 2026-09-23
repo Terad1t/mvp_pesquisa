@@ -156,8 +156,29 @@ def validar_extracao(p: CargoExtraido) -> list[Ocorrencia]:
         )
 
     posicoes = [c.posicao for c in p.candidatos]
-    if all(posicao is not None for posicao in posicoes):
-        posicoes_presentes = [posicao for posicao in posicoes if posicao is not None]
+    com_posicao = [c.nome for c, pos in zip(p.candidatos, posicoes) if pos is not None]
+    sem_posicao = [c.nome for c, pos in zip(p.candidatos, posicoes) if pos is None]
+
+    if com_posicao and sem_posicao:
+        # Caso que passava batido antes: se ALGUM candidato tem posição e
+        # OUTRO não, isso por si só é suspeito — o campo é opcional no
+        # schema, mas ou o Gemini extrai posição para a tabela inteira, ou
+        # não extrai para nenhuma. Um "buraco" no meio é o mesmo padrão de
+        # "linha pulada" que a checagem de posições faltantes abaixo detecta
+        # quando as posições numéricas em si têm um buraco — só que aqui o
+        # buraco está na extração do campo, não no valor.
+        ocorrencias.append(
+            Ocorrencia(
+                Nivel.ERRO,
+                f"Posição extraída para alguns candidatos mas não outros "
+                f"(sem posição: {', '.join(sem_posicao)}). Extração de posição "
+                "inconsistente dentro do mesmo cargo.",
+            )
+        )
+    elif com_posicao:
+        # Todos têm posição — confere que formam uma sequência 1..N sem
+        # buraco nem repetição.
+        posicoes_presentes = [pos for pos in posicoes if pos is not None]
         duplicadas = {
             posicao for posicao in posicoes_presentes if posicoes_presentes.count(posicao) > 1
         }
@@ -177,6 +198,7 @@ def validar_extracao(p: CargoExtraido) -> list[Ocorrencia]:
                     f"Posição faltante na extração: {', '.join(map(str, sorted(faltantes)))}.",
                 )
             )
+    # else: nenhum candidato tem posição — campo opcional, extração ok assim.
 
     for c in p.candidatos:
         ocorrencias += _faixa(c.porcentual, f"{c.nome} (% total)")

@@ -41,11 +41,10 @@ uv run python table_extractor.py PDFs/pesquisa.pdf --cargo GOVERNADOR --pagina 7
 uv run pytest -q
 ```
 
-O `main.py` tenta o parser antes do Gemini. Com `--cargo GOVERNADOR` ou
-`--cargo PRESIDENTE`, uma extração determinística bem-sucedida evita a chamada
-à API. Sem filtro, o parser resolve Governador e Presidente, mas o Gemini ainda
-é chamado para completar o Senado; os blocos resolvidos pelo parser prevalecem
-sobre os blocos equivalentes da IA.
+O `main.py` tenta o parser antes do Gemini. Com `--cargo GOVERNADOR`,
+`--cargo PRESIDENTE` ou `--cargo SENADOR`, uma extração determinística
+bem-sucedida evita a chamada à API. Sem filtro, o parser tenta os três cargos;
+o Gemini só é chamado se alguma tabela não puder ser reconstruída.
 
 Com `--pasta`, cada PDF é processado individualmente. Os JSONs são separados
 por estado em `saidas/{ESTADO}/` e recebem o nome do PDF, por exemplo
@@ -138,6 +137,7 @@ O parser já foi testado contra `PDFs/pesquisa.pdf` e extraiu corretamente:
 
 - Governador: 8 candidatos da página 7;
 - Presidente: 12 candidatos da página 14;
+- Senado: 8 candidatos da consolidação das perguntas 05 e 06, na página 13;
 - nomes partidos em mais de uma linha, como `DOUTOR ALEXANDRE SALOMÃO` e
   `VETERINÁRIO WILSON GRASSI`.
 
@@ -147,7 +147,8 @@ Cada linha extraída contém `posicao`, `nome`, `partido`, `votos`, `porcentual`
 O parser rejeita explicitamente páginas que não correspondem ao cargo ou que
 não permitem reconstruir linhas com segurança. Nesses casos, o fluxo chama o
 Gemini como fallback. No modo completo, o parser ainda não cobre Senado, então
-o Gemini permanece necessário para esse cargo.
+o Gemini só é necessário quando alguma das três tabelas não puder ser
+reconstruída.
 
 ## Saída organizada por estado
 
@@ -159,9 +160,9 @@ consumir mais adiante — o site também separa a apresentação por estado.
 
 ## Estado atual
 
-- O parser determinístico funciona isoladamente para Governador e Presidente
-  em tabelas textuais com o layout observado no PDF real.
-- O parser e o pipeline híbrido possuem 13 testes automatizados, cobrindo
+- O parser determinístico funciona isoladamente para Governador, Presidente e
+  a consolidação do Senado em tabelas textuais com o layout observado no PDF real.
+- O parser e o pipeline híbrido possuem 22 testes automatizados, cobrindo
   extração, posições, votos, percentuais, nomes quebrados, fallback e falhas esperadas.
 - PyMuPDF está declarado em `pyproject.toml`, `uv.lock` e `requirements.txt`.
 - Governador e Presidente estão implementados no cálculo principal com a mesma
@@ -171,9 +172,8 @@ consumir mais adiante — o site também separa a apresentação por estado.
   documento.
 - Cada cargo é validado e calculado de forma independente: um erro em Senado
   não trava Governador nem Presidente.
-- Senado é extraído e validado estruturalmente, mas o cálculo de "Outros"
-  fica pendente (`NotImplementedError` proposital) até a fórmula de dois
-  votos por eleitor ser definida. Isso não bloqueia o PDF.
+- Senado é extraído da tabela de consolidação, validado na base de 200% e
+  calculado com a regra de dois votos por eleitor.
 - `CandidatoExtraido` aceita `posicao` e `votos` opcionais, e `CargoExtraido`
   preserva a identificação textual da `pergunta`.
 - O parser já está integrado ao `main.py`: evita o Gemini para Governador e
@@ -185,15 +185,11 @@ consumir mais adiante — o site também separa a apresentação por estado.
 
 ## O que falta
 
-1. Estudar as tabelas do Senado, incluindo a consolidação das duas perguntas,
-   sem aplicar ainda a fórmula de cargo não definida.
-2. Generalizar a identificação de cenários, perguntas e cargos para outros
+1. Generalizar a identificação de cenários, perguntas e cargos para outros
   layouts e institutos.
-3. Criar suporte determinístico ao Senado e decidir como consolidar as duas
-  perguntas.
-4. Ampliar o fallback para preservar diagnósticos de confiança e tabelas
+2. Ampliar o fallback para preservar diagnósticos de confiança e tabelas
   parcialmente reconstruídas.
-5. Implementar geração das artes e integração com o PesquisaPRO.
+3. Implementar geração das artes e integração com o PesquisaPRO.
 
 O fallback já funciona: parser confiável usa dados estruturados; parser incapaz
    de reconstruir a tabela chama o Gemini.
@@ -204,6 +200,7 @@ O fallback já funciona: parser confiável usa dados estruturados; parser incapa
 uv run pytest -q
 ```
 
-Resultado atual: 15 testes passando, cobrindo parser, contrato com os schemas,
-fallback Gemini, validação de posições e processamento em lote. Os testes de extração usam o PDF real
+Resultado atual: 22 testes passando, cobrindo parser, contrato com os schemas,
+fallback Gemini, validação de posições, processamento em lote e regra matemática
+do Senado. Os testes de extração usam o PDF real
 local; portanto, dependem da presença de `PDFs/pesquisa.pdf`.
