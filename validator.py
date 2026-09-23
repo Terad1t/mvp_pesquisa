@@ -22,11 +22,12 @@ from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
 
-from calculator import CEM, soma_total, soma_validos
-from schemas import PesquisaExtraida, PesquisaFinal
+from calculator import CEM, DOIS_VOTOS, soma_total, soma_validos
+from schemas import CargoExtraido, PesquisaFinal
 
 # Tolerâncias em pontos percentuais.
 TOL_SOMA = Decimal("1.5")        # arredondamento acumulado nas somas do PDF
+TOL_SOMA_SENADO = Decimal("3.0")  # base 200%, com mais linhas somando (top-N maior), tolerância maior
 TOL_DIVERGENCIA_ALERTA = Decimal("0.3")
 TOL_DIVERGENCIA_ERRO = Decimal("1.0")
 TOL_NEGATIVO = Decimal("0.2")
@@ -51,7 +52,7 @@ def _faixa(valor: Decimal, rotulo: str, maximo: Decimal = CEM) -> list[Ocorrenci
     return []
 
 
-def _checar_coerencia_entre_colunas(p: PesquisaExtraida) -> list[Ocorrencia]:
+def _checar_coerencia_entre_colunas(p: CargoExtraido) -> list[Ocorrencia]:
     """Cruza as duas colunas usando a relação que as define.
 
     Percentual válido é o percentual total recalculado sobre uma base que
@@ -71,6 +72,9 @@ def _checar_coerencia_entre_colunas(p: PesquisaExtraida) -> list[Ocorrencia]:
     dois cenários da pesquisa produz números individualmente plausíveis — todos
     entre 0 e 100, todos somando perto de 100 — e passaria por qualquer
     validação de faixa. Mas quase nunca sobrevive a esta relação.
+
+    Só se aplica a cargos de um voto por eleitor (Governador, Presidente) —
+    ver validar_extracao para o motivo de Senado ser tratado à parte.
     """
     base = CEM - p.ns_nr - p.brancos_nulos
     if base <= 0:
@@ -99,8 +103,46 @@ def _checar_coerencia_entre_colunas(p: PesquisaExtraida) -> list[Ocorrencia]:
     return ocorrencias
 
 
-def validar_extracao(p: PesquisaExtraida) -> list[Ocorrencia]:
-    """Roda ANTES do cálculo. Lixo que entra aqui vira arte errada lá na frente."""
+def _validar_extracao_senado(p: CargoExtraido, ocorrencias: list[Ocorrencia]) -> list[Ocorrencia]:
+    """Checagem específica de Senado, no lugar da checagem de coerência entre
+    colunas (que não se aplica aqui — ver comentário abaixo).
+
+    Por que não dá para reaproveitar _checar_coerencia_entre_colunas: aquela
+    checagem compara duas colunas extraídas INDEPENDENTEMENTE uma da outra,
+    uma vinda do PDF, a outra também vinda do PDF. Para Senado, só extraímos
+    UMA coluna real (a "Porcentagem de casos" da tabela de consolidação); a
+    segunda ("válida", excluindo NS/NR e brancos) é CALCULADA pelo Python a
+    partir da primeira (ver calculator.calcular_senador) — não tem sentido
+    comparar um número com a fórmula que o gerou, isso sempre "bate" por
+    construção e não pega erro nenhum.
+
+    O que de fato vale a pena checar aqui: se a soma de tudo que foi extraído
+    (candidatos + NS/NR + brancos, todos em "Porcentagem de casos") fica perto
+    de 200%. Isso pega o erro mais provável nessa extração específica: o
+    Gemini ter pego a coluna errada da tabela de consolidação — "Porcentagem"
+    (base 4020, soma 100%) em vez de "Porcentagem de casos" (base 2010, soma
+    200%). Se isso acontecer, a soma sai perto de 100, não de 200, e este
+    check pega antes de virar um "Outros" errado silencioso.
+    """
+    st = soma_total(p)
+    if abs(st - DOIS_VOTOS) > TOL_SOMA_SENADO:
+        ocorrencias.append(
+            Ocorrencia(
+                Nivel.ERRO,
+                f"Soma dos percentuais de Senado ({st}) foge de 200 além da tolerância. "
+                "Confira se a extração usou a coluna 'Porcentagem de casos' da tabela de "
+                "CONSOLIDAÇÃO, e não a pergunta individual ou a coluna 'Porcentagem' simples.",
+            )
+        )
+    return ocorrencias
+
+
+def validar_extracao(p: CargoExtraido) -> list[Ocorrencia]:
+    """Roda ANTES do cálculo. Lixo que entra aqui vira arte errada lá na frente.
+
+    Senado segue um caminho parcialmente diferente dos demais cargos — ver
+    _validar_extracao_senado para o motivo.
+    """
     ocorrencias: list[Ocorrencia] = []
 
     if not p.candidatos:
@@ -113,12 +155,38 @@ def validar_extracao(p: PesquisaExtraida) -> list[Ocorrencia]:
             Ocorrencia(Nivel.ERRO, f"Candidato repetido na extração: {', '.join(sorted(duplicados))}.")
         )
 
+    posicoes = [c.posicao for c in p.candidatos]
+    if all(posicao is not None for posicao in posicoes):
+        posicoes_presentes = [posicao for posicao in posicoes if posicao is not None]
+        duplicadas = {
+            posicao for posicao in posicoes_presentes if posicoes_presentes.count(posicao) > 1
+        }
+        if duplicadas:
+            ocorrencias.append(
+                Ocorrencia(
+                    Nivel.ERRO,
+                    f"Posição repetida na extração: {', '.join(map(str, sorted(duplicadas)))}.",
+                )
+            )
+        esperadas = set(range(1, len(posicoes_presentes) + 1))
+        faltantes = esperadas - set(posicoes_presentes)
+        if faltantes:
+            ocorrencias.append(
+                Ocorrencia(
+                    Nivel.ERRO,
+                    f"Posição faltante na extração: {', '.join(map(str, sorted(faltantes)))}.",
+                )
+            )
+
     for c in p.candidatos:
         ocorrencias += _faixa(c.porcentual, f"{c.nome} (% total)")
         ocorrencias += _faixa(c.porcentagem_valida, f"{c.nome} (% válidos)")
 
     ocorrencias += _faixa(p.ns_nr, "NS/NR")
     ocorrencias += _faixa(p.brancos_nulos, "Brancos/Nulos")
+
+    if p.cargo == "SENADOR":
+        return _validar_extracao_senado(p, ocorrencias)
 
     st = soma_total(p)
     if st > CEM + TOL_SOMA:
@@ -142,7 +210,7 @@ def validar_resultado(p: PesquisaFinal) -> list[Ocorrencia]:
     for valor, rotulo in ((p.outros_valido, "Outros válidos"), (p.outros_total, "Outros total")):
         if valor < -TOL_NEGATIVO:
             ocorrencias.append(
-                Ocorrencia(Nivel.ERRO, f"{rotulo} ficou negativo ({valor}) — a soma estourou 100.")
+                Ocorrencia(Nivel.ERRO, f"{rotulo} ficou negativo ({valor}) — a soma estourou a base.")
             )
         elif valor < 0:
             ocorrencias.append(

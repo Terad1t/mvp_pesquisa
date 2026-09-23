@@ -1,16 +1,23 @@
 """
 Contratos de dados do MVP.
 
-Existem DOIS modelos propositalmente separados:
+Existem DOIS conjuntos de modelos propositalmente separados:
 
-    PesquisaExtraida  -> exatamente o que o Gemini tem permissão de dizer.
-    PesquisaFinal     -> o que o Python produz depois de calcular.
+    CargoExtraido / PesquisaPDF  -> exatamente o que o Gemini tem permissão
+                                     de dizer.
+    PesquisaFinal                -> o que o Python produz depois de calcular.
 
 Essa separação não é estética. Se "outros_valido" existisse no modelo de
 extração, mais cedo ou mais tarde alguém (ou o próprio modelo) preencheria
 esse campo, e a regra "a IA não calcula" viraria uma promessa em vez de uma
 garantia. Aqui ela é estrutural: não existe campo onde o Gemini possa
 escrever um valor calculado.
+
+Um PDF real da Veritá traz GOVERNADOR, SENADOR e PRESIDENTE juntos, do mesmo
+estado. Por isso a extração não é "um cargo isolado" — é um documento (com um
+"estado") que contém uma LISTA de blocos de cargo. Ver extractor.py para como
+cada bloco é validado de forma independente, para que um erro de schema em um
+cargo não derrube os outros dois.
 
 Todos os percentuais são Decimal, nunca float. Ver comentário em calculator.py.
 """
@@ -22,6 +29,14 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# Cargos que todo PDF da Veritá traz, sempre juntos, do mesmo estado. Usado
+# pelo main.py para detectar quando o Gemini devolveu menos cargos do que
+# deveria — sinal de falha de extração, não de que o cargo genuinamente não
+# existia na pesquisa (ver PROMPT em extractor.py, que também permite o
+# Gemini omitir um cargo que de fato não esteja no documento — a checagem
+# aqui existe para o caso comum, onde os três sempre aparecem).
+CARGOS_ESPERADOS = ("GOVERNADOR", "SENADOR", "PRESIDENTE")
+
 # --------------------------------------------------------------------------
 # Modelos de EXTRAÇÃO (fronteira com o Gemini)
 # --------------------------------------------------------------------------
@@ -32,8 +47,10 @@ class CandidatoExtraido(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
+    posicao: int | None = Field(default=None, ge=1)
     nome: str = Field(min_length=1)
     partido: str = Field(min_length=1)
+    votos: int | None = Field(default=None, ge=0)
     porcentual: Decimal = Field(description="% sobre o total de entrevistados")
     porcentagem_valida: Decimal = Field(description="% sobre os votos válidos")
 
@@ -45,25 +62,50 @@ class CandidatoExtraido(BaseModel):
         return v.upper()
 
 
-class PesquisaExtraida(BaseModel):
-    """O resultado bruto da leitura do documento. Nenhum campo derivado."""
+class CargoExtraido(BaseModel):
+    """O resultado bruto de UM cargo dentro do PDF. Nenhum campo derivado.
+
+    Não carrega "estado" — isso pertence ao documento como um todo
+    (PesquisaPDF), não a um cargo específico, porque os três cargos de um
+    mesmo PDF são sempre do mesmo estado.
+    """
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    estado: str = Field(min_length=1)
     cargo: str = Field(min_length=1)
+    pergunta: str | None = Field(default=None, min_length=1)
     candidatos: list[CandidatoExtraido] = Field(min_length=1)
     ns_nr: Decimal
     brancos_nulos: Decimal
 
+    @field_validator("cargo")
+    @classmethod
+    def _cargo_maiusculo(cls, v: str) -> str:
+        return v.strip().upper()
+
+
+class PesquisaPDF(BaseModel):
+    """Container do PDF inteiro: um estado, vários cargos.
+
+    Usado apenas quando a extração INTEIRA valida de primeira. O caminho
+    comum (ver extractor.py) valida cada CargoExtraido separadamente e monta
+    o equivalente deste objeto manualmente, para isolar falhas por cargo —
+    mas o tipo continua existindo aqui como o contrato "ideal" do documento.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    estado: str = Field(min_length=1)
+    cargos: list[CargoExtraido] = Field(min_length=1)
+
 
 # --------------------------------------------------------------------------
-# Modelo FINAL (saída do Python)
+# Modelo FINAL (saída do Python, por cargo)
 # --------------------------------------------------------------------------
 
 
 class PesquisaFinal(BaseModel):
-    """Extração + campos calculados deterministicamente em Python."""
+    """Extração de UM cargo + campos calculados deterministicamente em Python."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -89,54 +131,79 @@ class PesquisaFinal(BaseModel):
 #    muito mais eficaz do que repetir isso no texto do prompt.
 # 3. "required" força o modelo a devolver o campo em vez de omiti-lo.
 
+_CANDIDATO_ITEM_SCHEMA: dict[str, Any] = {
+    "type": "OBJECT",
+    "properties": {
+        "posicao": {"type": "INTEGER", "description": "Posição da linha na tabela, quando disponível"},
+        "nome": {"type": "STRING", "description": "Nome do candidato como aparece no documento"},
+        "partido": {"type": "STRING", "description": "Sigla do partido. Ex.: PL, PDT, PSD"},
+        "votos": {"type": "INTEGER", "description": "Frequência/quantidade de entrevistados, quando disponível"},
+        "porcentual": {
+            "type": "NUMBER",
+            "description": (
+                "Percentual sobre o TOTAL de entrevistados (inclui brancos, nulos e NS/NR "
+                "no denominador). Normalmente é a coluna com o menor valor das duas."
+            ),
+        },
+        "porcentagem_valida": {
+            "type": "NUMBER",
+            "description": (
+                "Percentual sobre os votos VÁLIDOS (exclui brancos, nulos e NS/NR do "
+                "denominador). Normalmente é a coluna com o maior valor das duas."
+            ),
+        },
+    },
+    "required": ["nome", "partido", "porcentual", "porcentagem_valida"],
+}
+
 GEMINI_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "OBJECT",
     "properties": {
         "estado": {
             "type": "STRING",
-            "description": "Unidade federativa da pesquisa, por extenso e em maiúsculas. Ex.: PARANÁ",
+            "description": (
+                "Unidade federativa da pesquisa, por extenso e em maiúsculas. Ex.: PARANÁ. "
+                "É o mesmo estado para todos os cargos do documento."
+            ),
         },
-        "cargo": {
-            "type": "STRING",
-            "description": "Cargo em disputa nesta pergunta específica. Ex.: GOVERNADOR, SENADOR, PREFEITO",
-        },
-        "candidatos": {
+        "cargos": {
             "type": "ARRAY",
             "description": (
-                "Candidatos nominalmente citados nesta pergunta. NÃO inclua linhas agregadas "
-                "como 'Outros', 'Nenhum', 'Branco/Nulo' ou 'NS/NR' nesta lista."
+                "Um item para cada cargo majoritário encontrado no documento (GOVERNADOR, "
+                "SENADOR, PRESIDENTE). Cada item é auto-contido: não misture candidatos de "
+                "cargos diferentes no mesmo item."
             ),
             "items": {
                 "type": "OBJECT",
                 "properties": {
-                    "nome": {"type": "STRING", "description": "Nome do candidato como aparece no documento"},
-                    "partido": {"type": "STRING", "description": "Sigla do partido. Ex.: PL, PDT, PSD"},
-                    "porcentual": {
-                        "type": "NUMBER",
-                        "description": (
-                            "Percentual sobre o TOTAL de entrevistados (inclui brancos, nulos e NS/NR "
-                            "no denominador). Normalmente é a coluna com o menor valor das duas."
-                        ),
+                    "cargo": {
+                        "type": "STRING",
+                        "description": "GOVERNADOR, SENADOR ou PRESIDENTE",
                     },
-                    "porcentagem_valida": {
-                        "type": "NUMBER",
+                    "pergunta": {
+                        "type": "STRING",
+                        "description": "Texto ou identificação da pergunta/cenário, quando disponível",
+                    },
+                    "candidatos": {
+                        "type": "ARRAY",
                         "description": (
-                            "Percentual sobre os votos VÁLIDOS (exclui brancos, nulos e NS/NR do "
-                            "denominador). Normalmente é a coluna com o maior valor das duas."
+                            "Candidatos nominalmente citados para ESTE cargo. NÃO inclua linhas "
+                            "agregadas como 'Outros', 'Nenhum', 'Branco/Nulo' ou 'NS/NR' nesta lista."
                         ),
+                        "items": _CANDIDATO_ITEM_SCHEMA,
+                    },
+                    "ns_nr": {
+                        "type": "NUMBER",
+                        "description": "Percentual de Não sabe / Não respondeu para ESTE cargo, sobre o total de entrevistados",
+                    },
+                    "brancos_nulos": {
+                        "type": "NUMBER",
+                        "description": "Percentual de brancos e nulos somados para ESTE cargo, sobre o total de entrevistados",
                     },
                 },
-                "required": ["nome", "partido", "porcentual", "porcentagem_valida"],
+                "required": ["cargo", "candidatos", "ns_nr", "brancos_nulos"],
             },
         },
-        "ns_nr": {
-            "type": "NUMBER",
-            "description": "Percentual de Não sabe / Não respondeu, sobre o total de entrevistados",
-        },
-        "brancos_nulos": {
-            "type": "NUMBER",
-            "description": "Percentual de brancos e nulos somados, sobre o total de entrevistados",
-        },
     },
-    "required": ["estado", "cargo", "candidatos", "ns_nr", "brancos_nulos"],
+    "required": ["estado", "cargos"],
 }

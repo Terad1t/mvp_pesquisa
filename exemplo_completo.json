@@ -1,0 +1,34 @@
+{
+  "estado": "PARANÁ",
+  "cargos": [
+    {
+      "cargo": "GOVERNADOR",
+      "candidatos": [
+        {"nome": "SERGIO MORO", "partido": "PL", "porcentual": 50.0, "porcentagem_valida": 51.8},
+        {"nome": "REQUIÃO FILHO", "partido": "PDT", "porcentual": 23.5, "porcentagem_valida": 24.3},
+        {"nome": "SANDRO ALEX", "partido": "PSD", "porcentual": 19.1, "porcentagem_valida": 19.8}
+      ],
+      "ns_nr": 2.3,
+      "brancos_nulos": 1.2
+    },
+    {
+      "cargo": "PRESIDENTE",
+      "candidatos": [
+        {"nome": "CANDIDATO A", "partido": "PARTIDO A", "porcentual": 45.0, "porcentagem_valida": 48.0},
+        {"nome": "CANDIDATO B", "partido": "PARTIDO B", "porcentual": 40.0, "porcentagem_valida": 42.7},
+        {"nome": "CANDIDATO C", "partido": "PARTIDO C", "porcentual": 5.0, "porcentagem_valida": 5.3}
+      ],
+      "ns_nr": 3.5,
+      "brancos_nulos": 2.5
+    },
+    {
+      "cargo": "SENADOR",
+      "candidatos": [
+        {"nome": "SENADOR X", "partido": "PARTIDO X", "porcentual": 30.0, "porcentagem_valida": 30.9},
+        {"nome": "SENADOR Y", "partido": "PARTIDO Y", "porcentual": 25.0, "porcentagem_valida": 25.8}
+      ],
+      "ns_nr": 2.0,
+      "brancos_nulos": 1.0
+    }
+  ]
+}
