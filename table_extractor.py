@@ -177,6 +177,47 @@ def extrair_cargo(
     return rows
 
 
+def extrair_intencoes_senado(caminho_pdf: Path) -> list[TabelaExtraida]:
+    """Extrai as tabelas individuais de primeiro e segundo voto do Senado."""
+    if not caminho_pdf.is_file():
+        raise TabelaNaoEncontrada(f"PDF não encontrado: {caminho_pdf}")
+
+    tabelas: list[TabelaExtraida] = []
+    vistos: set[str] = set()
+    with pymupdf.open(caminho_pdf) as doc:
+        for indice, page in enumerate(doc):
+            texto = page.get_text("text").upper()
+            if "SENADOR" not in texto or "PERGUNTA" not in texto or "ESTIMULADA" not in texto:
+                continue
+            if "CONSOLIDAÇÃO" in texto or "PORCENTAGEM DE CASOS" in texto:
+                continue
+            if re.search(r"(?:1[ºO°]|PRIMEIR[AO])\s*VOTO", texto):
+                rotulo = "1º VOTO"
+            elif re.search(r"(?:2[ºO°]|SEGUND[AO])\s*VOTO", texto):
+                rotulo = "2º VOTO"
+            else:
+                continue
+            if rotulo in vistos:
+                continue
+
+            candidatos = extrair_cargo(caminho_pdf, "SENADOR", pagina=indice + 1)
+            tabelas.append(
+                TabelaExtraida(
+                    cargo="SENADOR",
+                    pergunta=_normalizar_texto(" ".join(page.get_text("text").splitlines()[:4])),
+                    candidatos=candidatos,
+                    ns_nr=_percentual_ausente(page, "NS/NR"),
+                    brancos_nulos=_percentual_ausente(page, "Branco/nulo"),
+                    estado=_estado_da_pagina(doc),
+                )
+            )
+            vistos.add(rotulo)
+
+    if len(tabelas) != 2:
+        raise TabelaNaoEncontrada("As duas intenções do Senado não foram encontradas.")
+    return tabelas
+
+
 def extrair_tabela(caminho_pdf: Path, cargo: str, pagina: int | None = None) -> TabelaExtraida:
     """Extrai uma tabela completa, incluindo pergunta e percentuais ausentes."""
     if not caminho_pdf.is_file():

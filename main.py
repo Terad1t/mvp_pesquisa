@@ -31,7 +31,7 @@ from dotenv import load_dotenv
 from calculator import CargoNaoSuportado, calcular
 from extractor import ErroDeExtracao, ErroTransitorio, ResultadoExtracao, extrair, extrair_de_json
 from schemas import CARGOS_ESPERADOS, CargoExtraido, PesquisaFinal
-from table_extractor import TabelaNaoEncontrada, extrair_tabela
+from table_extractor import TabelaNaoEncontrada, extrair_intencoes_senado, extrair_tabela
 from validator import Nivel, Ocorrencia, tem_erro, validar_extracao, validar_resultado
 
 LARGURA = 40
@@ -62,7 +62,33 @@ def _resultado_do_parser(caminho_pdf: Path, cargo: str) -> ResultadoExtracao:
             "brancos_nulos": tabela.brancos_nulos,
         }
     )
-    return ResultadoExtracao(estado=tabela.estado, cargos=[bloco])
+    intencoes = []
+    if cargo.strip().upper() == "SENADOR":
+        intencoes = [_bloco_da_tabela(item) for item in extrair_intencoes_senado(caminho_pdf)]
+    return ResultadoExtracao(estado=tabela.estado, cargos=[bloco], senado_intencoes=intencoes)
+
+
+def _bloco_da_tabela(tabela) -> CargoExtraido:
+    return CargoExtraido.model_validate(
+        {
+            "cargo": tabela.cargo,
+            "pergunta": tabela.pergunta,
+            "origem": "parser",
+            "candidatos": [
+                {
+                    "posicao": candidato["posicao"],
+                    "nome": candidato["nome"],
+                    "partido": candidato["partido"],
+                    "votos": candidato["votos"],
+                    "porcentual": candidato["porcentual"],
+                    "porcentagem_valida": candidato["porcentagem_valida"],
+                }
+                for candidato in tabela.candidatos
+            ],
+            "ns_nr": tabela.ns_nr,
+            "brancos_nulos": tabela.brancos_nulos,
+        }
+    )
 
 
 def _extrair_hibrido(caminho_pdf: Path, cargo_filtro: str | None) -> ResultadoExtracao:
@@ -82,19 +108,26 @@ def _extrair_hibrido(caminho_pdf: Path, cargo_filtro: str | None) -> ResultadoEx
         # Se todas as tabelas suportadas forem reconstruídas, não há motivo
         # para chamar a API. Se alguma falhar, Gemini completa o documento.
         parser_blocos: dict[str, CargoExtraido] = {}
+        senado_intencoes: list[CargoExtraido] = []
         estado_parser = ""
         avisos_parser: list[str] = []
         for cargo in sorted(_CARGOS_PARSER):
             try:
                 parcial = _resultado_do_parser(caminho_pdf, cargo)
                 parser_blocos[cargo] = parcial.cargos[0]
+                if cargo == "SENADOR":
+                    senado_intencoes = parcial.senado_intencoes
                 estado_parser = estado_parser or parcial.estado
                 print(f"✓ Parser determinístico: {cargo} extraído.")
             except (TabelaNaoEncontrada, ValueError) as erro:
                 print(f" [!] Parser não conseguiu {cargo}: {erro}")
                 avisos_parser.append(f"{cargo}: fallback para Gemini ({erro})")
         if parser_blocos.keys() == set(CARGOS_ESPERADOS):
-            return ResultadoExtracao(estado=estado_parser, cargos=list(parser_blocos.values()))
+            return ResultadoExtracao(
+                estado=estado_parser,
+                cargos=list(parser_blocos.values()),
+                senado_intencoes=senado_intencoes,
+            )
         print("→ Fallback: usando Gemini para o documento inteiro e cargos restantes.")
         resultado_gemini = extrair(caminho_pdf)
         cargos = [parser_blocos.get(bloco.cargo, bloco) for bloco in resultado_gemini.cargos]
@@ -104,6 +137,7 @@ def _extrair_hibrido(caminho_pdf: Path, cargo_filtro: str | None) -> ResultadoEx
             estado=resultado_gemini.estado or estado_parser,
             cargos=cargos,
             avisos=avisos_parser + resultado_gemini.avisos,
+            senado_intencoes=senado_intencoes or resultado_gemini.senado_intencoes,
         )
     resultado = extrair(caminho_pdf)
     if alvo:
@@ -351,6 +385,10 @@ def _salvar_json_combinado(
         "completo": not bool(faltando),
         "cargos": {cargo: json.loads(final.model_dump_json()) for cargo, final in finais.items()},
     }
+    if resultado.senado_intencoes and "SENADOR" in saida["cargos"]:
+        saida["cargos"]["SENADOR"]["intencoes"] = [
+            json.loads(bloco.model_dump_json()) for bloco in resultado.senado_intencoes
+        ]
     if faltando:
         saida["cargos_faltando"] = sorted(faltando)
     if pendentes:

@@ -43,6 +43,21 @@ def export_json_to_xlsx(json_path: Path, xlsx_path: Path) -> None:
     if isinstance(cargos, list):
         cargos = {item.get("cargo", "CARGO"): item for item in cargos}
     for cargo, bloco in cargos.items():
+        if cargo == "SENADOR":
+            for index, intencao in enumerate(bloco.get("intencoes", []), start=1):
+                sheet = workbook.create_sheet(f"Senador {index} voto"[:31])
+                _write_cargo_sheet(
+                    sheet,
+                    data.get("estado", ""),
+                    cargo,
+                    intencao,
+                    navy,
+                    teal,
+                    pale,
+                    grid,
+                    section_label=f"{index}. SENADOR - {index}º VOTO",
+                    include_aggregates=False,
+                )
         sheet = workbook.create_sheet(LABELS.get(cargo, cargo)[:31])
         _write_cargo_sheet(sheet, data.get("estado", ""), cargo, bloco, navy, teal, pale, grid)
 
@@ -76,10 +91,14 @@ def _write_cargo_sheet(
     teal: str,
     pale: str,
     grid: Side,
+    section_label: str | None = None,
+    include_aggregates: bool = True,
 ) -> None:
     headers = ["Ranking", "Candidato", "Partido", "Votos válidos", "% total"]
     sheet.merge_cells("A1:E1")
     sheet["A1"] = f"{estado} - {LABELS.get(cargo, cargo).upper()}"
+    if section_label:
+        sheet["A1"] = f"{estado} - {section_label}"
     sheet["A1"].font = Font(name="Arial", size=18, bold=True, color=navy)
     sheet["A1"].alignment = Alignment(vertical="center")
     sheet.row_dimensions[1].height = 30
@@ -91,7 +110,7 @@ def _write_cargo_sheet(
     sheet.row_dimensions[2].height = 26
 
     sheet.merge_cells("A4:E4")
-    sheet["A4"] = f"{_section_number(cargo)}. {LABELS.get(cargo, cargo).upper()}"
+    sheet["A4"] = section_label or f"{_section_number(cargo)}. {LABELS.get(cargo, cargo).upper()}"
     sheet["A4"].font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
     sheet["A4"].fill = PatternFill("solid", fgColor=navy)
     sheet["A4"].alignment = Alignment(vertical="center")
@@ -117,9 +136,13 @@ def _write_cargo_sheet(
             candidate.get("porcentual"),
         ])
 
-    sheet.append([None, "OUTROS", None, bloco.get("outros_valido"), bloco.get("outros_total")])
-    sheet.append([None, "NS/NR", None, None, bloco.get("ns_nr")])
-    sheet.append([None, "BRANCO/NULO", None, None, bloco.get("brancos_nulos")])
+    if include_aggregates:
+        sheet.append([None, "OUTROS", None, bloco.get("outros_valido"), bloco.get("outros_total")])
+        sheet.append([None, "NS/NR", None, None, bloco.get("ns_nr")])
+        sheet.append([None, "BRANCO/NULO", None, None, bloco.get("brancos_nulos")])
+    else:
+        sheet.append([None, "NS/NR", None, None, bloco.get("ns_nr")])
+        sheet.append([None, "BRANCO/NULO", None, None, bloco.get("brancos_nulos")])
 
     for row in sheet.iter_rows(min_row=6, max_row=sheet.max_row, min_col=1, max_col=5):
         for cell in row:
@@ -357,6 +380,24 @@ class DesktopApp(ctk.CTk):
             metrics.pack(fill="x", padx=14, pady=(0, 9))
             for label, value in (("NS/NR", bloco.get("ns_nr", "—")), ("Brancos/nulos", bloco.get("brancos_nulos", "—")), ("Outros válidos", bloco.get("outros_valido", "—")), ("Outros total", bloco.get("outros_total", "—"))):
                 ctk.CTkLabel(metrics, text=f"{label}: {value}", text_color="#9eb5aa", anchor="w").pack(side="left", padx=(0, 24))
+            for index, intencao in enumerate(bloco.get("intencoes", []), start=1):
+                ctk.CTkLabel(
+                    cargo_card,
+                    text=f"{index}. SENADOR - {index}º VOTO",
+                    text_color="#c4ef62",
+                    font=ctk.CTkFont(size=14, weight="bold"),
+                    anchor="w",
+                ).pack(fill="x", padx=14, pady=(8, 4))
+                intention_header = ctk.CTkFrame(cargo_card, fg_color="#29473d")
+                intention_header.pack(fill="x", padx=8)
+                for column in ("Ranking", "Candidato", "Partido", "Votos válidos", "% total"):
+                    ctk.CTkLabel(intention_header, text=column, anchor="w", font=ctk.CTkFont(size=11, weight="bold")).pack(side="left", expand=True, fill="x", padx=8, pady=8)
+                for candidate in sorted(intencao.get("candidatos", []), key=lambda item: (item.get("posicao") is None, item.get("posicao") or 0)):
+                    row = ctk.CTkFrame(cargo_card, fg_color="#182823")
+                    row.pack(fill="x", padx=8, pady=1)
+                    values = (candidate.get("posicao", "—"), candidate.get("nome", "—"), candidate.get("partido", "—"), candidate.get("porcentagem_valida", "—"), candidate.get("porcentual", "—"))
+                    for value in values:
+                        ctk.CTkLabel(row, text=str(value), anchor="w", font=ctk.CTkFont(size=11)).pack(side="left", expand=True, fill="x", padx=8, pady=7)
             header = ctk.CTkFrame(cargo_card, fg_color="#29473d")
             header.pack(fill="x", padx=8)
             columns = ("Posição", "Nome", "Partido", "Votos", "% total", "% válido")

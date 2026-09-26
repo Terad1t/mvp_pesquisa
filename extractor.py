@@ -140,6 +140,7 @@ class ResultadoExtracao:
     estado: str
     cargos: list[CargoExtraido]
     avisos: list[str] = field(default_factory=list)
+    senado_intencoes: list[CargoExtraido] = field(default_factory=list)
 
 
 # O SDK já reenvia sozinho em 429/5xx com backoff exponencial (ver
