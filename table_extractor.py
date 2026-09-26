@@ -50,7 +50,7 @@ def _percentual_ausente(page: Any, rotulo: str) -> Decimal:
     mesma_linha = [
         word[4].strip()
         for word in words
-        if word[0] >= 280 and abs(word[1] - marcador[1]) <= 1.5
+        if word[0] > marcador[2] and abs(word[1] - marcador[1]) <= 1.5
     ]
     percentuais = [word for word in mesma_linha if _PERCENTUAL.fullmatch(word)]
     if not percentuais:
@@ -67,16 +67,8 @@ def _estado_da_pagina(doc: Any) -> str:
 
 
 def _palavras_da_tabela(page: Any) -> list[tuple[float, float, str]]:
-    """Retorna palavras da área de candidatos da pergunta encontrada."""
-    words = page.get_text("words")
-    # O cabeçalho termina perto de y=142. O limite inferior fica amplo porque
-    # a quantidade de candidatos varia entre cargos.
-    return [
-        (word[0], word[1], word[4].strip())
-        for word in words
-        if 145 < word[1] < page.rect.height - 250
-        and word[0] >= 90
-    ]
+    """Retorna palavras textuais da página, sem assumir coordenadas fixas."""
+    return [(word[0], word[1], word[4].strip()) for word in page.get_text("words")]
 
 
 def _localizar_pagina_cargo(doc: Any, cargo: str) -> int:
@@ -151,10 +143,13 @@ def extrair_cargo(
         ):
             continue
 
+        primeira_coluna = min(x for x, _ in numeric_words)
         name_words = [
             word
             for x, word_y, word in words
-            if 90 <= x < 280 and y - 12 <= word_y <= y + 18
+            if x < primeira_coluna
+            and y - 12 <= word_y <= y + 18
+            and word.upper() not in {"VÁLIDO", "VALIDO"}
         ]
         if not name_words:
             continue
@@ -225,8 +220,7 @@ def _extrair_tabela_senado(page: Any, doc: Any) -> TabelaExtraida:
     linhas: dict[float, list[tuple[float, str]]] = {}
     for word in words:
         x, y, texto = word[0], round(word[1], 1), word[4].strip()
-        if 150 < y < 405 and x >= 40:
-            linhas.setdefault(y, []).append((x, texto))
+        linhas.setdefault(y, []).append((x, texto))
 
     candidatos: list[dict[str, object]] = []
     ns_nr: Decimal | None = None
@@ -242,7 +236,8 @@ def _extrair_tabela_senado(page: Any, doc: Any) -> TabelaExtraida:
         if len(numeros) != 3:
             continue
         frequencia, _, casos = (texto for _, texto in numeros)
-        nome_partido = " ".join(texto for x, texto in itens if 40 <= x < 300)
+        primeira_coluna = min(x for x, _ in numeros)
+        nome_partido = " ".join(texto for x, texto in itens if x < primeira_coluna)
         nome_upper = nome_partido.upper()
         if nome_upper == "NS/NR":
             ns_nr = _decimal(casos)

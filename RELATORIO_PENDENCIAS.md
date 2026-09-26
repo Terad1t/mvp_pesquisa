@@ -30,6 +30,8 @@ e identificacao da pergunta/cenario. O objetivo nao e resumir o texto do PDF.
   percentual acumulado;
 - extrair NS/NR, brancos/nulos, estado e texto da pergunta;
 - rejeitar paginas que nao tenham uma tabela reconstruivel.
+- inferir a faixa das linhas e das colunas a partir do conteudo da propria
+  pagina, reduzindo dependencia de coordenadas fixas.
 
 No PDF real atualmente usado, o parser funciona para:
 
@@ -46,6 +48,8 @@ No PDF real atualmente usado, o parser funciona para:
 - sem filtro de cargo, o parser tenta os tres cargos;
 - o Gemini so e chamado para cargos cuja tabela nao puder ser reconstruida;
 - se o parser falhar, o Gemini e usado como fallback;
+- o resultado preserva avisos com o cargo e o motivo do fallback;
+- cada `PesquisaFinal` informa `origem` como `parser`, `gemini` ou `desconhecida`;
 - os dados deterministas substituem os blocos equivalentes retornados pelo
   Gemini.
 
@@ -80,7 +84,7 @@ e movido para `analisados`, `bloqueados` ou `falhos` conforme o resultado.
 
 ### Testes
 
-Existem 22 testes automatizados cobrindo:
+Existem 23 testes automatizados cobrindo:
 
 - tabelas reais de Governador e Presidente;
 - nomes quebrados;
@@ -101,23 +105,25 @@ uv run pytest -q
 
 ## Pendencias tecnicas
 
-### 1. Senado
+### 1. Senado e novos layouts
 
 As tabelas do Senado aparecem em duas perguntas e uma consolidacao no PDF real.
 A consolidacao ja e extraida deterministicamente e a regra de base 200% ja foi
 implementada. Ainda falta validar esse comportamento em mais institutos e
-layouts. Permanecem como pontos de atencao:
-
-- extrair deterministicamente as duas tabelas;
-- identificar candidatos, posicoes e percentuais de cada pergunta;
-- entender a tabela de consolidacao;
-- definir se a saida usa a primeira pergunta, a segunda ou a consolidacao;
-- validar a soma correta para dois votos por eleitor;
-- ampliar os testes com outros formatos de consolidacao;
+layouts e ampliar os testes com outros formatos de consolidacao.
 
 Se a consolidacao nao puder ser reconstruida, o Gemini continua sendo fallback.
 
-### 2. Robustez para outros layouts
+### 2. Formatos de entrada
+
+- PDFs textuais sao suportados pelo parser.
+- PDFs escaneados ou prints dentro de PDF nao sao lidos deterministicamente;
+  podem seguir para Gemini, mas dependem da capacidade multimodal da API.
+- PNG/JPG soltos nao sao aceitos pela CLI atual.
+- XLSX nao e aceito; exigiria um importador separado para o contrato dos
+  schemas.
+
+### 3. Robustez para outros layouts
 
 O parser foi calibrado para o layout do PDF Verita usado nos testes. Ainda
 precisa lidar com:
@@ -132,18 +138,17 @@ precisa lidar com:
 PDFs sem texto nativo devem continuar usando OCR ou Gemini como fallback. OCR
 nao deve ser adicionado sem uma validacao especifica de custo e qualidade.
 
-### 3. Confiabilidade do fallback
+### 4. Confiabilidade do fallback
 
 Ainda pode ser melhorado:
 
-- registrar qual cargo veio do parser e qual veio do Gemini;
-- registrar o motivo exato da queda para fallback;
 - impedir uma saida automatica quando posicao obrigatoria estiver ausente;
 - validar que a quantidade de candidatos e as colunas numericas formam uma
   tabela completa;
-- incluir a origem (`parser` ou `gemini`) no JSON final, se isso for desejado.
+- definir se o frontend precisa de niveis de confianca alem de `origem` e
+  `avisos`.
 
-### 4. Saida e operacao
+### 5. Saida e operacao
 
 Ainda falta decidir:
 
@@ -154,7 +159,7 @@ Ainda falta decidir:
 
 O comportamento atual evita sobrescrita adicionando sufixos numericos.
 
-### 5. Artes e PesquisaPRO
+### 6. Artes e PesquisaPRO
 
 Ainda nao foram implementados:
 
@@ -163,17 +168,23 @@ Ainda nao foram implementados:
 - descoberta ou uso de API;
 - automacao de navegador, caso nao exista API.
 
+### 7. Frontend desktop
+
+O app CustomTkinter ja cobre selecao de PDF/pasta, acompanhamento por cargo,
+consulta dos dados estruturados do JSON, exportacao JSON -> XLSX, fila de
+bloqueados, historico por estado e configuracoes basicas. Ainda falta
+empacotar com PyInstaller e testar a experiencia em uma maquina limpa.
+
 ## Ordem recomendada
 
 1. Validar o lote com varios PDFs reais de estados diferentes.
-2. Implementar e testar o parser das duas perguntas do Senado.
-3. Definir a regra matematica e o schema final do Senado.
-4. Tornar posicao obrigatoria apenas quando a tabela exigir e houver evidencia
+2. Validar o parser do Senado em outros formatos de consolidacao.
+3. Tornar posicao obrigatoria apenas quando a tabela exigir e houver evidencia
    suficiente para isso.
-5. Ampliar testes com PDFs de layouts diferentes.
-6. Definir contrato de saida para o consumidor das artes.
-7. Investigar a API ou o fluxo de navegador do PesquisaPRO.
-8. Implementar geracao das artes.
+4. Ampliar testes com PDFs de layouts diferentes.
+5. Definir contrato de saida para o consumidor das artes.
+6. Investigar a API ou o fluxo de navegador do PesquisaPRO.
+7. Implementar geracao das artes.
 
 ## Estado atual resumido
 

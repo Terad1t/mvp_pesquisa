@@ -188,7 +188,8 @@ def _validar_blocos(bruto: dict) -> ResultadoExtracao:
     for item in itens:
         nome_cargo = item.get("cargo") if isinstance(item, dict) else None
         try:
-            cargos.append(CargoExtraido.model_validate(item))
+            cargo = CargoExtraido.model_validate(item)
+            cargos.append(cargo.model_copy(update={"origem": "gemini"}))
         except ValidationError as erro:
             identificacao = nome_cargo or "cargo não identificado"
             avisos.append(f"{identificacao}: item fora do schema esperado ({erro.error_count()} erro(s))")

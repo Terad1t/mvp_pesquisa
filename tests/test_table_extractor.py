@@ -6,7 +6,8 @@ import pytest
 from table_extractor import TabelaNaoEncontrada, extrair_cargo, extrair_governador, extrair_tabela
 
 
-PDF_REAL = Path(__file__).parents[1] / "PDFs" / "pesquisa.pdf"
+_RAIZ = Path(__file__).parents[1]
+PDF_REAL = next(_RAIZ.glob("PDFs/**/pesquisa.pdf"), _RAIZ / "PDFs" / "pesquisa.pdf")
 
 
 @pytest.fixture

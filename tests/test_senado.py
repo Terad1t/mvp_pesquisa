@@ -38,10 +38,12 @@ def test_validator_rejeita_coluna_de_base_100_no_senado():
 
 
 def test_calculo_do_senado_recalcula_validos_e_outros():
-    resultado = calcular_senador(_bloco_senado((80, 60, 40)), "PARANÁ", top_n=2)
+    resultado = calcular_senador(_bloco_senado((50, 40, 35, 30, 25)), "PARANÁ", top_n=3)
 
-    assert [c.nome for c in resultado.candidatos] == ["CANDIDATO 1", "CANDIDATO 2"]
-    assert resultado.candidatos[0].porcentagem_valida == Decimal("88.9")
-    assert resultado.candidatos[1].porcentagem_valida == Decimal("66.7")
-    assert resultado.outros_valido == Decimal("44.4")
-    assert resultado.outros_total == Decimal("40.0")
+    assert [c.nome for c in resultado.candidatos] == [
+        "CANDIDATO 1", "CANDIDATO 2", "CANDIDATO 3", "CANDIDATO 4", "CANDIDATO 5"
+    ]
+    assert resultado.candidatos[0].porcentagem_valida == Decimal("55.6")
+    assert resultado.candidatos[4].porcentagem_valida == Decimal("27.8")
+    assert resultado.outros_valido == Decimal("0.0")
+    assert resultado.outros_total == Decimal("0.0")

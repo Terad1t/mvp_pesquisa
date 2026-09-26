@@ -74,6 +74,7 @@ class CargoExtraido(BaseModel):
 
     cargo: str = Field(min_length=1)
     pergunta: str | None = Field(default=None, min_length=1)
+    origem: str | None = Field(default=None, min_length=1)
     candidatos: list[CandidatoExtraido] = Field(min_length=1)
     ns_nr: Decimal
     brancos_nulos: Decimal
@@ -111,6 +112,7 @@ class PesquisaFinal(BaseModel):
 
     estado: str
     cargo: str
+    origem: str = "desconhecida"
     candidatos: list[CandidatoExtraido]
     ns_nr: Decimal
     brancos_nulos: Decimal

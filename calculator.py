@@ -38,6 +38,7 @@ from schemas import CargoExtraido, PesquisaFinal
 CEM = Decimal("100")
 DOIS_VOTOS = Decimal("200")
 UMA_CASA = Decimal("0.1")
+TOP_N_SENADO = 5
 
 
 def arredondar(valor: Decimal) -> Decimal:
@@ -97,6 +98,7 @@ def _calcular_majoritario_um_voto(bloco: CargoExtraido, estado: str, top_n: int)
     return PesquisaFinal(
         estado=estado,
         cargo=bloco.cargo,
+        origem=bloco.origem or "desconhecida",
         candidatos=principais,
         ns_nr=bloco.ns_nr,
         brancos_nulos=bloco.brancos_nulos,
@@ -155,7 +157,9 @@ def calcular_senador(bloco: CargoExtraido, estado: str, top_n: int = 3) -> Pesqu
     ]
 
     ordenados = sorted(recalculados, key=lambda c: c.porcentagem_valida, reverse=True)
-    principais = ordenados[:top_n]
+    # A apresentação do Senado precisa mostrar cinco candidatos; Governador
+    # e Presidente continuam respeitando o top_n geral do pipeline.
+    principais = ordenados[:TOP_N_SENADO]
 
     soma_validos_principais = sum((c.porcentagem_valida for c in principais), Decimal(0))
     soma_totais_principais = sum((c.porcentual for c in principais), Decimal(0))
@@ -163,6 +167,7 @@ def calcular_senador(bloco: CargoExtraido, estado: str, top_n: int = 3) -> Pesqu
     return PesquisaFinal(
         estado=estado,
         cargo=bloco.cargo,
+        origem=bloco.origem or "desconhecida",
         candidatos=principais,
         ns_nr=bloco.ns_nr,
         brancos_nulos=bloco.brancos_nulos,

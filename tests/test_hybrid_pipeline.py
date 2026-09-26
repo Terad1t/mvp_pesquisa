@@ -7,7 +7,8 @@ from schemas import CargoExtraido
 from validator import Nivel, validar_extracao
 
 
-PDF_REAL = Path(__file__).parents[1] / "PDFs" / "pesquisa.pdf"
+_RAIZ = Path(__file__).parents[1]
+PDF_REAL = next(_RAIZ.glob("PDFs/**/pesquisa.pdf"), _RAIZ / "PDFs" / "pesquisa.pdf")
 
 
 def test_parser_entra_no_contrato_principal_para_governador():
@@ -19,6 +20,7 @@ def test_parser_entra_no_contrato_principal_para_governador():
     assert bloco.candidatos[0].posicao == 1
     assert bloco.candidatos[0].votos == 1004
     assert "governador" in bloco.pergunta.lower()
+    assert bloco.origem == "parser"
     assert validar_extracao(bloco) == []
 
 
@@ -45,7 +47,7 @@ def test_parser_entra_no_contrato_principal_para_senado():
 
 
 def test_cargo_sem_parser_delega_para_gemini(monkeypatch):
-    esperado = object()
+    esperado = ResultadoExtracao(estado="PARANÁ", cargos=[])
 
     def fake_extrair(caminho):
         assert caminho == PDF_REAL
@@ -53,7 +55,21 @@ def test_cargo_sem_parser_delega_para_gemini(monkeypatch):
 
     monkeypatch.setattr("main.extrair", fake_extrair)
 
-    assert _extrair_hibrido(PDF_REAL, "PREFEITO") is esperado
+    resultado = _extrair_hibrido(PDF_REAL, "PREFEITO")
+
+    assert resultado is esperado
+    assert "PREFEITO" in resultado.avisos[0]
+
+
+def test_fallback_preserva_motivo_do_parser(monkeypatch):
+    esperado = ResultadoExtracao(estado="PARANÁ", cargos=[])
+    monkeypatch.setattr("main.extrair", lambda caminho: esperado)
+
+    resultado = _extrair_hibrido(PDF_REAL, "PREFEITO")
+
+    assert resultado.avisos
+    assert "PREFEITO" in resultado.avisos[0]
+    assert "fallback para Gemini" in resultado.avisos[0]
 
 
 def test_modo_completo_prefere_parser_nos_cargos_deterministicos(monkeypatch):

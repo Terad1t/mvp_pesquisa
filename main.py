@@ -24,6 +24,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from typing import Callable
 
 from dotenv import load_dotenv
 
@@ -55,6 +56,7 @@ def _resultado_do_parser(caminho_pdf: Path, cargo: str) -> ResultadoExtracao:
         {
             "cargo": tabela.cargo,
             "pergunta": tabela.pergunta,
+            "origem": "parser",
             "candidatos": candidatos,
             "ns_nr": tabela.ns_nr,
             "brancos_nulos": tabela.brancos_nulos,
@@ -73,11 +75,15 @@ def _extrair_hibrido(caminho_pdf: Path, cargo_filtro: str | None) -> ResultadoEx
         except (TabelaNaoEncontrada, ValueError) as erro:
             print(f" [!] Parser não conseguiu {alvo}: {erro}")
             print("→ Fallback: enviando o PDF ao Gemini.")
+            resultado = extrair(caminho_pdf)
+            resultado.avisos.insert(0, f"{alvo}: fallback para Gemini ({erro})")
+            return resultado
     elif alvo is None:
         # Se todas as tabelas suportadas forem reconstruídas, não há motivo
         # para chamar a API. Se alguma falhar, Gemini completa o documento.
         parser_blocos: dict[str, CargoExtraido] = {}
         estado_parser = ""
+        avisos_parser: list[str] = []
         for cargo in sorted(_CARGOS_PARSER):
             try:
                 parcial = _resultado_do_parser(caminho_pdf, cargo)
@@ -86,6 +92,7 @@ def _extrair_hibrido(caminho_pdf: Path, cargo_filtro: str | None) -> ResultadoEx
                 print(f"✓ Parser determinístico: {cargo} extraído.")
             except (TabelaNaoEncontrada, ValueError) as erro:
                 print(f" [!] Parser não conseguiu {cargo}: {erro}")
+                avisos_parser.append(f"{cargo}: fallback para Gemini ({erro})")
         if parser_blocos.keys() == set(CARGOS_ESPERADOS):
             return ResultadoExtracao(estado=estado_parser, cargos=list(parser_blocos.values()))
         print("→ Fallback: usando Gemini para o documento inteiro e cargos restantes.")
@@ -96,9 +103,15 @@ def _extrair_hibrido(caminho_pdf: Path, cargo_filtro: str | None) -> ResultadoEx
         return ResultadoExtracao(
             estado=resultado_gemini.estado or estado_parser,
             cargos=cargos,
-            avisos=resultado_gemini.avisos,
+            avisos=avisos_parser + resultado_gemini.avisos,
         )
-    return extrair(caminho_pdf)
+    resultado = extrair(caminho_pdf)
+    if alvo:
+        resultado.avisos.insert(
+            0,
+            f"{alvo}: parser determinístico não cobre este cargo; fallback para Gemini",
+        )
+    return resultado
 
 
 def _mostrar_ocorrencias(ocorrencias: list[Ocorrencia], etapa: str) -> None:
@@ -208,6 +221,7 @@ def processar(
     top_n: int = 3,
     cargo_filtro: str | None = None,
     nome_saida: str = "pesquisa.json",
+    on_cargo: Callable[[str, str, list[Ocorrencia]], None] | None = None,
 ) -> int:
     """Fases 2 a 4, para todos os cargos extraídos do PDF. Devolve o exit code."""
     for aviso in resultado.avisos:
@@ -248,7 +262,11 @@ def processar(
             )
 
     for bloco in blocos:
+        if on_cargo:
+            on_cargo(bloco.cargo, "processando", [])
         status, final, ocorrencias = _processar_cargo(bloco, resultado.estado, top_n)
+        if on_cargo:
+            on_cargo(bloco.cargo, status, ocorrencias)
         _mostrar_ocorrencias(ocorrencias, f"Validação — {bloco.cargo}")
 
         if status == "bloqueado":
@@ -329,6 +347,7 @@ def _salvar_json_combinado(
 
     saida = {
         "estado": resultado.estado,
+        "avisos": resultado.avisos,
         "completo": not bool(faltando),
         "cargos": {cargo: json.loads(final.model_dump_json()) for cargo, final in finais.items()},
     }
